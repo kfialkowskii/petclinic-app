@@ -64,48 +64,37 @@ jobs:
       - name: Fetch infra values
         id: infra
         run: |
-          echo "vm_ip=$(az vm list-ip-addresses -g $RG \
-            --query "[0].virtualMachine.network.publicIpAddresses[0].ipAddress" -o tsv)" >> "$GITHUB_OUTPUT"
           echo "acr=$(az acr list -g $RG --query "[0].name" -o tsv)" >> "$GITHUB_OUTPUT"
           echo "mysql_host=$(az mysql flexible-server list -g $RG \
             --query "[0].fullyQualifiedDomainName" -o tsv)" >> "$GITHUB_OUTPUT"
           echo "mysql_user=$(az mysql flexible-server list -g $RG \
             --query "[0].administratorLogin" -o tsv)" >> "$GITHUB_OUTPUT"
 
-      - name: Setup SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.VM_SSH_PRIVATE_KEY }}" > ~/.ssh/key
-          chmod 600 ~/.ssh/key
-
-      - name: Deploy
+      - name: Deploy via VM managed identity
         env:
           VERSION:    ${{ needs.release.outputs.version }}
           ACR:        ${{ steps.infra.outputs.acr }}
-          VM_IP:      ${{ steps.infra.outputs.vm_ip }}
           MYSQL_HOST: ${{ steps.infra.outputs.mysql_host }}
           MYSQL_USER: ${{ steps.infra.outputs.mysql_user }}
           MYSQL_PASS: ${{ secrets.MYSQL_PASSWORD }}
         run: |
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/key azureuser@$VM_IP \
-            "ACR=$ACR VERSION=$VERSION MYSQL_HOST=$MYSQL_HOST MYSQL_USER=$MYSQL_USER MYSQL_PASS=$MYSQL_PASS bash -s" << 'REMOTE'
-          az login --identity --allow-no-subscriptions
-          az acr login --name $ACR
-
-          docker stop petclinic 2>/dev/null || true
-          docker rm   petclinic 2>/dev/null || true
-
-          docker pull ${ACR}.azurecr.io/petclinic:${VERSION}
-
-          docker run -d \
-            --name petclinic \
-            --restart unless-stopped \
-            -p 8080:8080 \
-            -e SPRING_PROFILES_ACTIVE=mysql \
-            -e MYSQL_URL="jdbc:mysql://${MYSQL_HOST}:3306/petclinic" \
-            -e MYSQL_USER="$MYSQL_USER" \
-            -e MYSQL_PASS="$MYSQL_PASS" \
-            ${ACR}.azurecr.io/petclinic:${VERSION}
-
-          echo "Deployed ${VERSION} → http://$(curl -s ifconfig.me):8080"
-          REMOTE
+          az vm run-command invoke \
+            --resource-group $RG \
+            --name vm-petclinic \
+            --command-id RunShellScript \
+            --scripts "
+              az login --identity --allow-no-subscriptions
+              az acr login --name ${ACR}
+              docker stop petclinic 2>/dev/null || true
+              docker rm   petclinic 2>/dev/null || true
+              docker pull ${ACR}.azurecr.io/petclinic:${VERSION}
+              docker run -d \
+                --name petclinic \
+                --restart unless-stopped \
+                -p 8080:8080 \
+                -e SPRING_PROFILES_ACTIVE=mysql \
+                -e MYSQL_URL='jdbc:mysql://${MYSQL_HOST}:3306/petclinic' \
+                -e MYSQL_USER='${MYSQL_USER}' \
+                -e MYSQL_PASS='${MYSQL_PASS}' \
+                ${ACR}.azurecr.io/petclinic:${VERSION}
+            "
