@@ -3,7 +3,11 @@ name: PR
 on:
   pull_request:
     branches: [main]
-
+    paths:
+      - 'src/**'
+      - 'pom.xml'
+      - 'Dockerfile'
+      
 env:
   RG: rg-petclinic
 
