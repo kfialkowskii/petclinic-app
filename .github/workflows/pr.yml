@@ -34,6 +34,6 @@ jobs:
         run: |
           ACR=$(az acr list -g $RG --query "[0].name" -o tsv)
           az acr login --name $ACR
-          IMAGE="${ACR}.azurecr.io/petclinic:$(echo ${{ github.sha }} | cut -c1-7)"
+          IMAGE="${ACR}.azurecr.io/petclinic:$(echo ${{ github.event.pull_request.head.sha }} | cut -c1-7)"
           docker build -t $IMAGE .
           docker push $IMAGE
